@@ -52,6 +52,32 @@ This link is cleartext h2c. Before exposing home to the internet:
 * add a shared `x-auth-token` header (commented in the template) and check it at
   home — otherwise anyone who finds `HOME_ADDR:HOME_PORT` can push streams.
 
+## Tuning for load
+
+The compose already raises the container's `nofile` ulimit and namespaced net
+sysctls (`somaxconn`, `tcp_max_syn_backlog`, `ip_local_port_range`, …) for the
+many inbound client connections.
+
+A few limits live on the **host** (Docker can't set them per-container, and with
+port-publish the inbound path still crosses the host's NAT/conntrack). On the VPS:
+
+```bash
+sudo tee /etc/sysctl.d/99-edge.conf >/dev/null <<'EOF'
+fs.file-max = 2097152
+net.netfilter.nf_conntrack_max = 1048576
+net.core.somaxconn = 65535
+net.ipv4.tcp_max_syn_backlog = 65535
+net.ipv4.ip_local_port_range = 1024 65535
+EOF
+sudo sysctl --system
+# raise conntrack hashsize too if needed:
+echo 262144 | sudo tee /sys/module/nf_conntrack/parameters/hashsize
+```
+
+If conntrack is the bottleneck, switch the edge to `network_mode: host` (drop the
+`ports:` mapping, set the listener to `LISTEN_PORT` directly) — that removes the
+NAT/conntrack path entirely, at the cost of binding the host port directly.
+
 ## Files
 
 | file | purpose |
