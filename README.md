@@ -54,29 +54,36 @@ This link is cleartext h2c. Before exposing home to the internet:
 
 ## Tuning for load
 
-The edge runs on **host networking** — it binds `LISTEN_PORT` directly, with no
-Docker NAT, so there is **no conntrack table to overflow** (a port-published edge
-dies around ~100k connections when conntrack fills). The container keeps a high
-`nofile` ulimit; the net limits must be set on the **HOST** (you can't set net
-sysctls per-container when sharing the host netns). On the VPS:
+The compose already raises the container's `nofile` ulimit and namespaced net
+sysctls (`somaxconn`, `tcp_max_syn_backlog`, `ip_local_port_range`, …) for the
+many inbound client connections.
+
+A few limits live on the **host** (Docker can't set them per-container, and with
+port-publish the inbound path still crosses the host's NAT/conntrack). On the VPS:
 
 ```bash
 sudo tee /etc/sysctl.d/99-edge.conf >/dev/null <<'EOF'
 fs.file-max = 2097152
+net.netfilter.nf_conntrack_max = 1048576
 net.core.somaxconn = 65535
 net.ipv4.tcp_max_syn_backlog = 65535
 net.ipv4.ip_local_port_range = 1024 65535
-net.ipv4.tcp_fin_timeout = 15
-net.ipv4.tcp_tw_reuse = 1
-# only needed if you still NAT somewhere in the path:
-# net.netfilter.nf_conntrack_max = 1048576
 EOF
 sudo sysctl --system
+# raise conntrack hashsize too if needed:
+echo 262144 | sudo tee /sys/module/nf_conntrack/parameters/hashsize
 ```
 
-Check it isn't silently dropping under load: `dmesg | grep -i conntrack`,
-`ss -s`, and the Envoy admin `curl -s localhost:9901/stats | grep -E
-'overflow|cx_active'`.
+If conntrack is the bottleneck under load, **raise it on the host** (keep
+port-publish — see `nf_conntrack_max` in the block above, and bump the hashsize):
+
+```bash
+echo 262144 | sudo tee /sys/module/nf_conntrack/parameters/hashsize
+```
+
+(`network_mode: host` would avoid the NAT/conntrack path entirely, but it broke
+inbound connectivity in testing — cause not yet diagnosed — so stick with
+port-publish + a larger conntrack table.)
 
 ## Files
 
