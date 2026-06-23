@@ -1,0 +1,21 @@
+# VPS edge: raw TCP -> one HTTP/2 connection to home.
+#
+#   cp .env.example .env   # set HOME_ADDR / HOME_PORT / LISTEN_PORT
+#   docker compose up -d
+#
+# Host LISTEN_PORT (default 443) is mapped by Docker to the container's internal
+# :10000 listener — so binding a low port needs no root/caps inside the container.
+
+services:
+  envoy:
+    image: envoyproxy/envoy:v1.31-latest
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "${LISTEN_PORT:-443}:10000"          # clients hit the VPS on LISTEN_PORT
+    volumes:
+      - ./envoy.tmpl.yaml:/etc/envoy/envoy.tmpl.yaml:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - 'sed -e "s|__HOME_ADDR__|$${HOME_ADDR:?set HOME_ADDR in .env}|g" -e "s|__HOME_PORT__|$${HOME_PORT:?set HOME_PORT in .env}|g" /etc/envoy/envoy.tmpl.yaml > /tmp/envoy.yaml && exec envoy -c /tmp/envoy.yaml --concurrency $${CONCURRENCY:-1}'
